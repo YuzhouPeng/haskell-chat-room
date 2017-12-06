@@ -43,6 +43,80 @@ data Client = Client
    , clientSendChan :: TChan Message
    }
    
+data Chatroom = Chatroom
+  { roomName :: String
+  , roomRef  :: Int
+  , members  :: TVar (Map Int Client)
+  }
+
+newChatroom :: Client -> String -> STM Chatroom
+newChatroom joiner@Client{..} room = do
+  clientList <- newTVar $ Map.insert clientID joiner Map.empty
+  return Chatroom { roomName = room
+                  , roomRef  = hash room
+                  , members  = clientList
+                  }
+
+getChatroom :: Int -> Server -> STM (Maybe Chatroom)
+getChatroom roomRef serv = do
+  rooms <- readTVar serv
+  case Map.lookup roomRef rooms of
+   Nothing -> return Nothing
+   Just x  -> return $ Just x
+
+joinChatroom :: Client -> Server -> String -> IO ()
+joinChatroom joiner@Client{..} rooms name = atomically $ do
+  roomList <- readTVar rooms
+  case Map.lookup (hash name) roomList of
+  --if there is no room num, we will create a new room, and add client
+    Nothing -> do
+      room <- newChatroom joiner name
+      let updatedRoomList = Map.insert (roomRef room) room roomList
+      writeTVar rooms updatedRoomList
+      sendResponse (roomRef room) (roomName room)
+    -- if there is an existing room, add client and update information
+    Just aRoom -> do
+      clientList <- readTVar (members aRoom)
+      let newClientList = Map.insert clientID joiner clientList
+      writeTVar (members aRoom) newClientList
+      sendResponse (roomRef aRoom) (roomName aRoom)
+    where
+     sendResponse ref name = sendMessage joiner (Response $ "JOINED_CHATROOM:"++name++"\nSERVER_IP:10.62.0.97\nPORT:"++show (fromIntegral port) ++ "\nROOM_REF:" ++ show ref ++"\nJOIN_ID:" ++ show (ref+clientID))
+
+leaveChatroom :: Client -> Server -> Int -> IO ()
+leaveChatroom client@Client{..} server roomRef = do
+  leave' client server roomRef (roomRef+clientID)
+  return ()
+
+leave' :: Client -> Server -> Int -> Int -> IO ()
+leave' client@Client{..} server roomRef joinRef = do
+  roomList <- atomically $ readTVar server
+  case Map.lookup roomRef roomList of
+    Nothing    -> putStrLn "Room does not exist" 
+    Just aRoom -> do
+      atomically $ sendMessage client (Response $ "LEFT_CHATROOM:" ++ show roomRef ++ "\nJOIN_ID:" ++ show joinRef)
+      removeUser -- >> sendRoomMessage notification aRoom >> atomically (sendMessage client notification)
+      putStrLn ("removing " ++ clientName ++ "the number messages sent")
+      putStrLn $ clientName++" left " ++ (roomName aRoom)
+      putStrLn $ "remove looks like: " ++ (show notification)
+      where
+       removeUser = atomically $ do
+         clientList <- readTVar (members aRoom)
+         let roomMembers = Map.elems clientList
+         mapM_ (\aClient -> sendMessage aClient notification) roomMembers
+         let newList = Map.delete (hash clientName) clientList
+         writeTVar (members aRoom) newList
+       notification = (Broadcast $ "CHAT:" ++ (show roomRef) ++ "\nCLIENT_NAME:" ++ clientName ++ "\nMESSAGE:" ++ clientName ++ " has left this chatroom.\n")
+
+deleteChatroom :: Server -> Int -> IO ()
+deleteChatroom serv ref = atomically $ do 
+  list <- readTVar serv
+  case Map.lookup ref list of
+    Nothing    -> return ()
+    Just aRoom -> do
+      let newList = Map.delete ref list
+      writeTVar serv newList
+   
 conn :: Handle -> Server -> IO ()
 conn handle server = do
   hSetNewlineMode handle universalNewlineMode
