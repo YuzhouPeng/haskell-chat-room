@@ -21,6 +21,20 @@ import qualified Data.Map as Map
 port :: Int
 port = 17316
 
+disconnectArgs :: Int
+disconnectArgs = 3
+
+sendMsgArgs :: Int
+sendMsgArgs = 5
+
+joinArgs :: Int
+joinArgs = 4
+
+leaveArgs :: Int
+leaveArgs = 3
+killService :: String
+killService = "KILL"
+
 -- Server
 -- we use TVar to avoid deadlock
 type Server = TVar (Map Int Chatroom)
@@ -116,6 +130,74 @@ deleteChatroom serv ref = atomically $ do
     Just aRoom -> do
       let newList = Map.delete ref list
       writeTVar serv newList
+   
+newClient :: String -> Int -> Handle -> IO Client
+newClient name id handle = do
+  c <- newTChanIO
+  return Client { clientName     = name
+                , clientID       = id
+                , clientHandle   = handle
+                , clientSendChan = c
+                }
+
+runClient :: Server -> Client -> IO ()
+runClient serv client@Client{..} = do
+  putStrLn "hello"
+  race server receive
+  putStrLn "round finished"
+  return ()
+  where
+   receive = forever $ do
+     putStrLn "receiving"
+     -- get first line information and redirect to different function
+     msg <- hGetLine clientHandle
+     putStrLn $ msg ++ " received"
+     case words msg of
+       ["JOIN_CHATROOM:",roomName] -> do
+         cmdLineArgs <- getArgs (joinArgs-1)
+         send cmdLineArgs roomName
+       ["LEAVE_CHATROOM:",roomRef] -> do
+         cmdLineArgs <- getArgs (leaveArgs-1)
+         mapM_ putStrLn cmdLineArgs
+         send cmdLineArgs roomRef
+       ["DISCONNECT:",ip]          -> do
+         cmdLineArgs <- getArgs (disconnectArgs-1)
+         putStrLn "disconnect command"
+         send cmdLineArgs ip
+       ["CHAT:",roomRef]           -> do
+         cmdLineArgs <- getArgs (sendMsgArgs-1)
+         send cmdLineArgs roomRef
+       ["KILL_SERVICE"]            -> do
+         send [killService] killService
+       _                           -> debug msg >> throwError
+       where
+        send :: [String] -> String -> IO ()
+        send args initialArg = atomically   $ sendMessage client $ Command (map words args) initialArg
+        throwError           = atomically   $ sendMessage client $ Error "Error 1" "Unrecognised Command"
+        getArgs n            = replicateM n $ hGetLine clientHandle
+   server = join $ atomically $ do
+     msg <- readTChan clientSendChan
+     return $ do 
+       continue <- handleMessage serv client msg
+       when continue $ server
+
+
+removeClient :: Server -> Client -> IO ()
+removeClient serv toRemove@Client{..} = do
+  rooms <- atomically $ readTVar serv
+  putStrLn "in remove client, server read"
+  let roomNames = Prelude.map (\room -> roomName room) (Map.elems rooms)
+  putStrLn "roomNames obtained"
+  putStrLn $ show roomNames
+
+  mapM_ (\room -> kickFrom room) roomNames
+  where
+   kickFrom room = do 
+     putStrLn ("removing " ++ clientName ++ " from " ++ room)
+     leaveChatroom toRemove serv (hash room) >> putStrLn (clientName ++ " removed from " ++ room)
+
+debug :: String -> IO ()
+debug = putStrLn
    
 conn :: Handle -> Server -> IO ()
 conn handle server = do
