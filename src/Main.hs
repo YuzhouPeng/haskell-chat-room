@@ -130,7 +130,22 @@ deleteChatroom serv ref = atomically $ do
     Just aRoom -> do
       let newList = Map.delete ref list
       writeTVar serv newList
-   
+
+sendMessage :: Client -> Message -> STM ()
+sendMessage Client{..} = writeTChan clientSendChan
+
+sendRoomMessage :: Message -> Chatroom -> IO ()
+sendRoomMessage msg room@Chatroom{..} = do
+  atomically $ notifyRoom
+  putStrLn $ "sRM " ++ (show msg)
+  where
+   notifyRoom = do
+    memberList <- readTVar members
+    let roomMembers = Map.elems memberList
+    mapM_ (\aClient -> sendMessage aClient msg) roomMembers
+
+
+
 newClient :: String -> Int -> Handle -> IO Client
 newClient name id handle = do
   c <- newTChanIO
@@ -195,6 +210,56 @@ removeClient serv toRemove@Client{..} = do
    kickFrom room = do 
      putStrLn ("removing " ++ clientName ++ " from " ++ room)
      leaveChatroom toRemove serv (hash room) >> putStrLn (clientName ++ " removed from " ++ room)
+
+handleMessage :: Server -> Client -> Message -> IO Bool
+handleMessage server client@Client{..} message =
+  case message of
+    Notice    msg       -> output $ msg
+    Response  msg       -> output $ msg
+    Broadcast msg       -> output $ msg
+    Error heading body  -> output $ "->" ++ heading ++ "<-\n" ++ body
+    Command msg mainArg -> case msg of
+
+      [["CLIENT_IP:",_],["PORT:",_],["CLIENT_NAME:",name]] -> do
+        putStrLn ("joining joinRef = " ++ show (clientID + (hash mainArg)))
+        let msgLines = "CHAT:"++(show $ (hash mainArg))++"\nCLIENT_NAME:"++clientName++"\nMESSAGE:"++clientName ++ " has joined this chatroom.\n"
+        joinChatroom client server mainArg >> notifyRoom (hash mainArg) (Broadcast msgLines)
+
+      [["JOIN_ID:",id],["CLIENT_NAME:",name]] -> do
+        putStrLn ("leave room joinref = " ++ id)
+        leave' client server (read mainArg :: Int) (read id :: Int)
+        putStrLn "chatroom left success"
+        return True
+
+
+      [["PORT:",_],["CLIENT_NAME:",name]] -> putStrLn "disconnecting user" >> removeClient server client >> return True
+
+
+      [["JOIN_ID:",id],["CLIENT_NAME:",name],("MESSAGE:":msgToSend),[]] -> do
+        notifyRoom (read mainArg :: Int) $ Broadcast ("CHAT: " ++ mainArg ++ "\nCLIENT_NAME: " ++ name ++ "\nMESSAGE: "++(unwords msgToSend)++"\n")
+
+
+      [["KILL"]]                         -> do
+        if mainArg == killService then return False
+        else return True
+
+      
+      _ -> do
+        atomically   $ sendMessage client $ Error "Error 1" "Unrecognised Args"
+        mapM_ putStrLn $ map unwords msg
+        putStrLn "Error didnt recognise command"
+        return True
+      where
+       reply replyMsg = atomically $ sendMessage client replyMsg
+       notifyRoom roomRef msg = do
+         roomsList <- atomically $ readTVar server
+         let maybeRoom = Map.lookup roomRef roomsList
+         case maybeRoom of
+           Nothing    -> putStrLn ("room does not exist " ++ (show roomRef)) >> return True
+           Just aRoom -> sendRoomMessage msg aRoom >> return True
+  where
+   output s = do putStrLn (clientName ++ " receiving\\/\n" ++ s) >> hPutStrLn clientHandle s; return True
+
 
 debug :: String -> IO ()
 debug = putStrLn
