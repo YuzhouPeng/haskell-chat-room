@@ -330,4 +330,4 @@ main = withSocketsDo $ do
    (handle, host, port) <- accept sock
    printf "Accepted connection from %s: %s\n" host (show port)
    -- start the connection process
-   forkFinally (talk handle server) (\_ -> hClose handle)
+   forkFinally (conn handle server) (\_ -> hClose handle)
