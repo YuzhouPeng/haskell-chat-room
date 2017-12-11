@@ -4,7 +4,9 @@
 
 module Main where
 
-
+import Text.Printf
+import Control.Concurrent.STM
+import GHC.Conc
 import Data.Map (Map)
 import qualified Data.List as List
 import Data.Hashable
@@ -12,9 +14,6 @@ import System.IO
 import System.Exit
 import Network
 import Control.Monad
-import Text.Printf
-import Control.Concurrent.STM
-import GHC.Conc
 import Control.Concurrent.Async
 import qualified Data.Map as Map
 
