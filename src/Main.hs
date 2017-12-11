@@ -18,22 +18,18 @@ import GHC.Conc
 import Control.Concurrent.Async
 import qualified Data.Map as Map
 
-port :: Int
-port = 17316
-
-disconnectArgs :: Int
-disconnectArgs = 3
-
 sendMsgArgs :: Int
 sendMsgArgs = 5
-
 joinArgs :: Int
 joinArgs = 4
-
 leaveArgs :: Int
 leaveArgs = 3
 killService :: String
 killService = "KILL"
+port :: Int
+port = 17316
+disconnectArgs :: Int
+disconnectArgs = 3
 
 -- Server
 -- we use TVar to avoid deadlock
@@ -49,7 +45,6 @@ data Message = Notice String
              | Error String String
              deriving Show
 
--- >>
 data Client = Client
    { clientName     :: String
    , clientID       :: Int
